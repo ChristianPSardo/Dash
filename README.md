@@ -21,19 +21,20 @@ npm run dev
 
 Abra `http://localhost:3000`.
 
-## Conectar ao Google Sheets
+## Conectar a uma planilha corporativa privada
 
-1. Na planilha, use **Compartilhar → Acesso geral → Qualquer pessoa com o link → Leitor**.
-2. Copie `.env.example` para `.env.local`.
-3. Confirme o ID em `GOOGLE_SHEETS_ID`.
-4. As abas precisam se chamar `BASE` e `QUALIDADE`. Se tiverem outros nomes, altere as variáveis correspondentes.
+1. No Google Cloud corporativo, crie ou solicite uma **conta de serviço**.
+2. Ative a **Google Sheets API** no projeto dessa conta.
+3. Compartilhe a planilha como **Leitor** somente com o e-mail da conta de serviço.
+4. Na Vercel, cadastre `GOOGLE_SERVICE_ACCOUNT_EMAIL` e `GOOGLE_PRIVATE_KEY` como variáveis protegidas.
+5. Cadastre também `GOOGLE_SHEETS_ID`, `BASE_SHEET_NAME` e `QUALITY_SHEET_NAME` conforme `.env.example`.
 
-O servidor consulta as abas a cada cinco minutos. E-mails e observações da planilha não são enviados ao navegador.
+O servidor consulta as abas sem tornar a planilha pública. E-mails e observações não são enviados ao navegador.
 
 ## Publicar na Vercel
 
 1. Envie este projeto para um repositório GitHub ou importe a pasta na Vercel.
-2. Em **Settings → Environment Variables**, cadastre `GOOGLE_SHEETS_ID`, `BASE_SHEET_NAME` e `QUALITY_SHEET_NAME` com os valores do `.env.example`.
+2. Em **Settings → Environment Variables**, cadastre as cinco variáveis descritas no `.env.example`.
 3. Clique em **Deploy**.
 
-Enquanto a planilha estiver privada, o painel mostra o snapshot consolidado do arquivo fornecido. Assim que o compartilhamento for liberado, ele passa automaticamente para os dados ao vivo.
+Enquanto as credenciais corporativas não estiverem configuradas, o painel mostra o snapshot consolidado do arquivo fornecido.
