@@ -2,9 +2,17 @@
 
 import { useEffect, useMemo, useState } from "react";
 
-type BaseRow = { id:string; date:string; macro:string; op:string; article:string; route:string; description:string; reason:string; specificReason:string; area:string; unit:string; phase:string; shipment:string; pieces:number; missing:number; status:string; block:string; pcp:string };
-type Audit = { date:string; order:string; request:string; auditedShift:string; producedShift:string; requestedWeight:number; cutWeight:number; auditedWeight:number; status:string };
-type Payload = { rows:BaseRow[]; audits:Audit[]; source:string; updatedAt:string };
+type Payload = {
+  summary:{requests:number;missing:number;pieces:number};
+  monthly:[string,number][];
+  areas:[string,number][];
+  reasons:[string,number][];
+  situations:[string,number][];
+  filters:{macros:string[];statuses:string[]};
+  quality:{audits:number;approved:number;rejected:number};
+  source:string;
+  updatedAt:string;
+};
 
 const snapshot = {
   requests: 2629, missing: 802988, pieces: 850959, audits: 527, approved: 484, rejected: 42,
@@ -17,7 +25,6 @@ const snapshot = {
 const fmt = new Intl.NumberFormat("pt-BR");
 const pct = (v:number) => `${v.toFixed(1).replace(".", ",")}%`;
 const title = (s:string) => s.toLocaleLowerCase("pt-BR").replace(/(^|\s)\S/g, c => c.toLocaleUpperCase("pt-BR"));
-const countBy = <T,>(data:T[], getter:(item:T)=>string) => Object.entries(data.reduce<Record<string,number>>((acc,item)=>{ const key=getter(item)||"Não informado"; acc[key]=(acc[key]||0)+1; return acc; },{})).sort((a,b)=>b[1]-a[1]);
 
 function Stat({ label, value, detail, tone="green" }:{ label:string; value:string; detail:string; tone?:string }) {
   return <article className={`stat ${tone}`}><div className="stat-head"><span>{label}</span><i /></div><strong>{value}</strong><small>{detail}</small></article>;
@@ -37,19 +44,18 @@ function Trend({ data }:{ data:[string,number][] }) {
 export default function Dashboard() {
   const [payload,setPayload]=useState<Payload|null>(null); const [error,setError]=useState(""); const [loading,setLoading]=useState(true);
   const [period,setPeriod]=useState("all"); const [macro,setMacro]=useState("all"); const [status,setStatus]=useState("all"); const [tab,setTab]=useState<"operacao"|"qualidade">("operacao");
-  const load=async()=>{ setLoading(true); setError(""); try { const r=await fetch('/api/dashboard',{cache:'no-store'}); const j=await r.json(); if(!r.ok) throw new Error(j.hint||j.error); setPayload(j); } catch(e){ setError(e instanceof Error?e.message:"Falha na atualização"); } finally { setLoading(false); } };
-  useEffect(()=>{load()},[]);
+  const load=async()=>{ setLoading(true); setError(""); try { const params=new URLSearchParams({period,macro,status}); const r=await fetch(`/api/dashboard?${params}`,{cache:'no-store'}); const j=await r.json(); if(!r.ok) throw new Error(j.hint||j.error); setPayload(j); } catch(e){ setError(e instanceof Error?e.message:"Falha na atualização"); } finally { setLoading(false); } };
+  useEffect(()=>{load()},[period,macro,status]);
 
-  const macros=useMemo(()=>payload?[...new Set(payload.rows.map(r=>r.macro).filter(Boolean))].sort():[],[payload]);
-  const statuses=useMemo(()=>payload?[...new Set(payload.rows.map(r=>r.status).filter(Boolean))].sort():[],[payload]);
-  const filtered=useMemo(()=>{ if(!payload)return[]; const now=new Date(); const cutoff=period==='all'?null:new Date(now.getTime()-Number(period)*86400000); return payload.rows.filter(r=>(macro==='all'||r.macro===macro)&&(status==='all'||r.status===status)&&(!cutoff||new Date(`${r.date}T00:00:00`)>=cutoff)); },[payload,period,macro,status]);
+  const macros=payload?.filters.macros||[];
+  const statuses=payload?.filters.statuses||[];
 
-  const live=Boolean(payload); const req=live?filtered.length:snapshot.requests; const missing=live?filtered.reduce((s,r)=>s+r.missing,0):snapshot.missing; const pieces=live?filtered.reduce((s,r)=>s+r.pieces,0):snapshot.pieces;
-  const approved=live?payload!.audits.filter(a=>a.status==='APROVADO').length:snapshot.approved; const rejected=live?payload!.audits.filter(a=>a.status==='REPROVADO').length:snapshot.rejected; const audits=live?payload!.audits.length:snapshot.audits;
-  const areas=(live?countBy(filtered,r=>r.area):snapshot.areas).slice(0,6) as [string,number][];
-  const reasons=(live?countBy(filtered,r=>r.reason):snapshot.reasons).slice(0,6) as [string,number][];
-  const situation=(live?countBy(filtered,r=>r.status):snapshot.statuses).slice(0,6) as [string,number][];
-  const monthly=useMemo(()=>{ if(!live)return snapshot.monthly; const map=new Map<string,number>(); filtered.forEach(r=>{if(r.date){const k=r.date.slice(0,7);map.set(k,(map.get(k)||0)+1)}}); return [...map.entries()].sort().slice(-9).map(([m,v])=>[new Date(`${m}-02`).toLocaleDateString('pt-BR',{month:'short'}).replace('.',''),v] as [string,number]); },[filtered,live]);
+  const live=Boolean(payload); const req=live?payload!.summary.requests:snapshot.requests; const missing=live?payload!.summary.missing:snapshot.missing; const pieces=live?payload!.summary.pieces:snapshot.pieces;
+  const approved=live?payload!.quality.approved:snapshot.approved; const rejected=live?payload!.quality.rejected:snapshot.rejected; const audits=live?payload!.quality.audits:snapshot.audits;
+  const areas=(live?payload!.areas:snapshot.areas).slice(0,6) as [string,number][];
+  const reasons=(live?payload!.reasons:snapshot.reasons).slice(0,6) as [string,number][];
+  const situation=(live?payload!.situations:snapshot.statuses).slice(0,6) as [string,number][];
+  const monthly=useMemo(()=>{ if(!live)return snapshot.monthly; return payload!.monthly.map(([m,v])=>[new Date(`${m}-02`).toLocaleDateString('pt-BR',{month:'short'}).replace('.',''),v] as [string,number]); },[payload,live]);
 
   return <main>
     <aside><div className="brand"><div className="brand-mark">R</div><div><b>Reposições</b><span>Inteligência operacional</span></div></div><nav><button className={tab==='operacao'?'active':''} onClick={()=>setTab('operacao')}><span>⌁</span> Visão geral</button><button className={tab==='qualidade'?'active':''} onClick={()=>setTab('qualidade')}><span>✓</span> Qualidade</button></nav><div className="side-note"><span>FONTE DE DADOS</span><b>{live?'Google Sheets':'Snapshot da planilha'}</b><small>{live?'Atualização automática a cada 5 min':'Conecte a planilha para dados ao vivo'}</small></div></aside>
@@ -63,7 +69,7 @@ export default function Dashboard() {
         <div className="stats quality"><Stat label="Auditorias" value={fmt.format(audits)} detail="Registros avaliados"/><Stat label="Aprovadas" value={fmt.format(approved)} detail={`${pct(audits?approved/audits*100:0)} das auditorias`} tone="blue"/><Stat label="Reprovadas" value={fmt.format(rejected)} detail={`${pct(audits?rejected/audits*100:0)} das auditorias`} tone="amber"/><Stat label="Conformidade" value={pct((approved+rejected)?approved/(approved+rejected)*100:0)} detail="Desconsidera status vazio" tone="violet"/></div>
         <div className="grid quality-grid"><article className="card wide"><div className="card-title"><div><span>RESULTADO</span><h2>Distribuição das auditorias</h2></div></div><div className="donut-wrap"><div className="donut" style={{background:`conic-gradient(#23c58b 0 ${approved/Math.max(approved+rejected,1)*100}%, #ffb454 0)`}}><div><b>{pct(approved/Math.max(approved+rejected,1)*100)}</b><span>aprovação</span></div></div><div className="legend"><p><i className="ok"/><span>Aprovado</span><b>{fmt.format(approved)}</b></p><p><i className="bad"/><span>Reprovado</span><b>{fmt.format(rejected)}</b></p></div></div></article><article className="card insight"><span>LEITURA DO INDICADOR</span><h2>Qualidade em nível elevado</h2><p>A taxa de conformidade está acima de 90%. Acompanhe as reprovações por turno e compare o peso solicitado, cortado e auditado para detectar desvios.</p><button onClick={()=>setTab('operacao')}>Ver causas operacionais →</button></article></div>
       </>}
-      <footer><span>Última atualização: {live?new Date(payload!.updatedAt).toLocaleString('pt-BR'):'arquivo enviado'}</span><span>{live?`${fmt.format(filtered.length)} registros após os filtros`:'Snapshot com dados até setembro de 2026'}</span></footer>
+      <footer><span>Última atualização: {live?new Date(payload!.updatedAt).toLocaleString('pt-BR'):'arquivo enviado'}</span><span>{live?`${fmt.format(req)} registros após os filtros`:'Snapshot com dados até setembro de 2026'}</span></footer>
     </section>
   </main>;
 }
