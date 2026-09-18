@@ -6,7 +6,7 @@ Dashboard corporativo que lê diretamente a planilha privada e mostra somente in
 
 1. Abra a planilha no Google Sheets com sua conta corporativa.
 2. Acesse **Extensões → Apps Script**.
-3. Crie/copiei os arquivos deste diretório: `Code.gs`, `Index.html`, `Stylesheet.html`, `JavaScript.html` e `appsscript.json`.
+3. Crie/copie os arquivos deste diretório: `Code.gs`, `Index.html`, `Stylesheet.html`, `JavaScript.html` e `appsscript.json`.
 4. Em **Configurações do projeto**, habilite a exibição do arquivo de manifesto para substituir `appsscript.json`.
 5. Execute `getDashboardData` uma vez no editor e autorize o acesso à planilha.
 6. Clique em **Implantar → Nova implantação → Aplicativo da Web**.
