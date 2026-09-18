@@ -25,7 +25,7 @@ function getDashboardData(filters) {
     status: cleanText(filters.status || 'Todas')
   };
   const cache = CacheService.getScriptCache();
-  const key = 'dashboard-v4-' + Utilities.base64EncodeWebSafe(JSON.stringify(safeFilters));
+  const key = 'dashboard-v5-' + Utilities.base64EncodeWebSafe(JSON.stringify(safeFilters));
   const cached = cache.get(key);
   if (cached) return JSON.parse(cached);
 
@@ -148,9 +148,9 @@ function analyzeQuality(table, filters, cutoff) {
 }
 
 function analyzeReplacements(rows) {
-  const completed = [], totalLead = [], stages = { release: [], receive: [], cut: [], finish: [] };
-  const reasons = {}, materials = {}, parts = {}, supply = {}, cutStatus = {}, receiveStatus = {}, buckets = {'Até 3 dias':0,'4–7 dias':0,'8–14 dias':0,'15–30 dias':0,'Acima de 30':0};
-  let totalQty = 0, backlog = 0, cancelled = 0, sla = 0;
+  const completed = [], cdLeadRaw = [], stages = { release: [], receive: [], cut: [], finish: [] };
+  const reasons = {}, materials = {}, parts = {}, supply = {}, cutStatus = {}, receiveStatus = {};
+  let totalQty = 0, backlog = 0, cancelled = 0;
   rows.forEach(r => {
     totalQty += numberValue(r[7]);
     count(reasons, r[0]); count(materials, r[8]); count(parts, r[9]); count(supply, r[11]); count(cutStatus, r[14]); count(receiveStatus, r[15]);
@@ -161,17 +161,21 @@ function analyzeReplacements(rows) {
     if (!finish && !isCancelled) backlog++;
     if (finish) completed.push(1);
     pushDays(stages.release, request, release); pushDays(stages.receive, release, receive); pushDays(stages.cut, receive, cutDate); pushDays(stages.finish, cutDate, finish);
-    const lead = diffDays(request, finish);
-    if (lead != null && lead >= 0) {
-      totalLead.push(lead); if (lead <= 7) sla++;
-      if (lead <= 3) buckets['Até 3 dias']++; else if (lead <= 7) buckets['4–7 dias']++; else if (lead <= 14) buckets['8–14 dias']++; else if (lead <= 30) buckets['15–30 dias']++; else buckets['Acima de 30']++;
-    }
+    const cdLead = diffDays(request, receive);
+    if (!isCancelled && cdLead != null && cdLead >= 0) cdLeadRaw.push(cdLead);
+  });
+  const cleanedLead = removeAbsurdLeadTimes(cdLeadRaw);
+  const cdLead = cleanedLead.values;
+  const sla = cdLead.filter(days => days <= 2).length;
+  const buckets = {'Até 2 dias':0,'3 dias':0,'4–5 dias':0,'6–10 dias':0,'Acima de 10':0};
+  cdLead.forEach(days => {
+    if (days <= 2) buckets['Até 2 dias']++; else if (days === 3) buckets['3 dias']++; else if (days <= 5) buckets['4–5 dias']++; else if (days <= 10) buckets['6–10 dias']++; else buckets['Acima de 10']++;
   });
   return {
     records: rows.length, totalQty: round(totalQty, 0), completed: completed.length, backlog: backlog, cancelled: cancelled,
     completionRate: rows.length ? round(completed.length / rows.length * 100, 1) : 0,
-    slaRate: totalLead.length ? round(sla / totalLead.length * 100, 1) : 0,
-    leadTime: stats(totalLead),
+    slaRate: cdLead.length ? round(sla / cdLead.length * 100, 1) : 0,
+    leadTime: Object.assign(stats(cdLead), { target: 2, ignoredOutliers: cleanedLead.ignored, outlierLimit: cleanedLead.limit }),
     stages: [stage('Solicitação → liberação', stages.release),stage('Liberação → recebimento', stages.receive),stage('Recebimento → corte', stages.cut),stage('Corte → finalização', stages.finish)],
     reasons: topPairs(reasons, 10), materials: topPairs(materials, 8), parts: topPairs(parts, 10), supplyStatus: topPairs(supply, 8), cutStatus: topPairs(cutStatus, 8), receiveStatus: topPairs(receiveStatus, 8), leadBuckets: Object.keys(buckets).map(k => [k,buckets[k]])
   };
@@ -195,6 +199,14 @@ function pushDays(arr,a,b){const n=diffDays(a,b);if(n!=null&&n>=0&&n<365)arr.pus
 function add(obj,k,n){obj[k]=(obj[k]||0)+n;} function count(obj,v){const k=cleanText(v)||'Não informado';add(obj,k,1);} function sum(a){return a.reduce((x,y)=>x+y,0);} function avg(a){return a.length?sum(a)/a.length:0;}
 function median(a){if(!a.length)return 0;const b=a.slice().sort((x,y)=>x-y),m=Math.floor(b.length/2);return b.length%2?b[m]:(b[m-1]+b[m])/2;}
 function percentile(a,p){if(!a.length)return 0;const b=a.slice().sort((x,y)=>x-y),i=Math.ceil(p*b.length)-1;return b[Math.max(0,i)];}
+function removeAbsurdLeadTimes(values){
+  if (!values.length) return { values: [], ignored: 0, limit: 30 };
+  const q1 = percentile(values, .25), q3 = percentile(values, .75);
+  const statisticalLimit = q3 + 1.5 * (q3 - q1);
+  const limit = Math.max(30, Math.ceil(statisticalLimit));
+  const cleaned = values.filter(value => value <= limit);
+  return { values: cleaned, ignored: values.length - cleaned.length, limit: limit };
+}
 function round(n,d){const p=Math.pow(10,d||0);return Math.round((n+Number.EPSILON)*p)/p;}
 function group(rows,col){const o={};if(col<0)return o;rows.forEach(r=>count(o,r[col]));return o;}
 function unique(a){return Array.from(new Set(a.filter(Boolean))).sort((x,y)=>x.localeCompare(y,'pt-BR'));}
