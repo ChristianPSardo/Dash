@@ -25,7 +25,7 @@ function getDashboardData(filters) {
     status: cleanText(filters.status || 'Todas')
   };
   const cache = CacheService.getScriptCache();
-  const key = 'dashboard-v5-' + Utilities.base64EncodeWebSafe(JSON.stringify(safeFilters));
+  const key = 'dashboard-v6-' + Utilities.base64EncodeWebSafe(JSON.stringify(safeFilters));
   const cached = cache.get(key);
   if (cached) return JSON.parse(cached);
 
@@ -57,6 +57,7 @@ function buildDashboard(baseValues, qualityValues, replacementValues, filters, c
   const missingPieces = findColumn(base.headers, ['FALTA TOTAL']);
   const area = findColumn(base.headers, ['AREA CAUSADORA']);
   const reason = findColumn(base.headers, ['MOTIVO']);
+  const baseOrder = findColumn(base.headers, ['OP', 'OT', 'ORDEM']);
 
   const allUnits = unique(base.rows.map(r => cleanText(r[baseUnit])).concat(replacementValues.map(r => cleanText(r[1]))));
   const allStatuses = unique(base.rows.map(r => cleanText(r[baseStatus])));
@@ -79,6 +80,9 @@ function buildDashboard(baseValues, qualityValues, replacementValues, filters, c
   );
   const cut = analyzeReplacements(replacements);
   const qualityData = analyzeQuality(quality, filters, cutoff);
+  const auditCross = analyzeAuditCross(quality, filteredBase, replacements, {
+    date: baseDate, order: baseOrder, area: area, reason: reason, status: baseStatus
+  }, cutoff);
 
   const result = {
     source: 'Google Sheets privado — dados consolidados no Apps Script',
@@ -100,10 +104,99 @@ function buildDashboard(baseValues, qualityValues, replacementValues, filters, c
     reasons: topPairs(group(filteredBase, reason), 8),
     situations: topPairs(group(filteredBase, baseStatus), 8),
     quality: qualityData,
+    auditCross: auditCross,
     cut: cut
   };
   return result;
 }
+
+function analyzeAuditCross(quality, baseRows, replacementRows, baseCols, cutoff) {
+  const h = quality.headers;
+  const qDate = fallbackColumn(findColumn(h, ['DATA', 'DATA AUDITORIA']), 0);
+  const qOrder = fallbackColumn(findColumn(h, ['ORDEM', 'OP', 'OT']), 1);
+  const qShift = fallbackColumn(findColumn(h, ['TURNO PRODUZIDO', 'TURNO']), 4);
+  const qStatus = fallbackColumn(findColumn(h, ['STATUS', 'RESULTADO']), 8);
+  const audits = quality.rows.filter(r => {
+    const d = toDate(r[qDate]);
+    return (!cutoff || !d || d >= cutoff) && otKey(r[qOrder]);
+  });
+
+  const requestsByOt = {};
+  function requestEntry(ot) {
+    if (!requestsByOt[ot]) requestsByOt[ot] = { base: 0, replacements: 0, dates: [], reasons: {}, areas: {}, statuses: {} };
+    return requestsByOt[ot];
+  }
+  baseRows.forEach(r => {
+    const ot = otKey(r[baseCols.order]); if (!ot) return;
+    const e = requestEntry(ot); e.base++; const d = toDate(r[baseCols.date]); if (d) e.dates.push(d);
+    count(e.reasons, r[baseCols.reason]); count(e.areas, r[baseCols.area]); count(e.statuses, r[baseCols.status]);
+  });
+  replacementRows.forEach(r => {
+    const ot = otKey(r[4]); if (!ot) return;
+    const e = requestEntry(ot); e.replacements++; const d = toDate(r[3]); if (d) e.dates.push(d);
+    count(e.reasons, r[0]);
+  });
+
+  const auditByOt = {}, monthMap = {}, statusMap = {}, shiftMap = {};
+  audits.forEach(r => {
+    const ot = otKey(r[qOrder]), d = toDate(r[qDate]);
+    if (!auditByOt[ot]) auditByOt[ot] = { count: 0, dates: [], statuses: {}, shifts: {} };
+    const a = auditByOt[ot]; a.count++; if (d) a.dates.push(d); count(a.statuses, r[qStatus]); count(a.shifts, r[qShift]);
+    const matched = !!requestsByOt[ot];
+    const month = d ? Utilities.formatDate(d, CONFIG.TIMEZONE, 'yyyy-MM') : 'Sem data';
+    if (!monthMap[month]) monthMap[month] = { audits: 0, matched: 0 };
+    monthMap[month].audits++; if (matched) monthMap[month].matched++;
+    addCrossGroup(statusMap, cleanText(r[qStatus]) || 'Não informado', matched);
+    addCrossGroup(shiftMap, cleanText(r[qShift]) || 'Não informado', matched);
+  });
+
+  const auditedOts = Object.keys(auditByOt);
+  const matchedOts = auditedOts.filter(ot => requestsByOt[ot]);
+  const matchedAudits = matchedOts.reduce((n, ot) => n + auditByOt[ot].count, 0);
+  const sources = {'Somente BASE':0,'Somente REPOSIÇÕES':0,'BASE e REPOSIÇÕES':0};
+  const timing = {'Solicitação após auditoria':0,'Mesmo dia':0,'Solicitação antes da auditoria':0,'Sem data comparável':0};
+  const matchedReasons = {}, matchedAreas = {};
+  const details = matchedOts.map(ot => {
+    const a = auditByOt[ot], req = requestsByOt[ot];
+    const firstAudit = minDate(a.dates), firstRequest = minDate(req.dates);
+    const source = req.base && req.replacements ? 'BASE e REPOSIÇÕES' : req.base ? 'Somente BASE' : 'Somente REPOSIÇÕES';
+    sources[source]++;
+    Object.keys(req.reasons).forEach(k => add(matchedReasons, k, req.reasons[k]));
+    Object.keys(req.areas).forEach(k => add(matchedAreas, k, req.areas[k]));
+    let timingLabel = 'Sem data comparável';
+    const delta = diffDays(firstAudit, firstRequest);
+    if (delta != null) timingLabel = delta > 0 ? 'Solicitação após auditoria' : delta === 0 ? 'Mesmo dia' : 'Solicitação antes da auditoria';
+    timing[timingLabel]++;
+    return {
+      ot: ot, audits: a.count, requests: req.base + req.replacements, source: source,
+      auditResult: topLabel(a.statuses), auditDate: formatDate(firstAudit), requestDate: formatDate(firstRequest), timing: timingLabel
+    };
+  }).sort((a,b) => b.requests-a.requests || b.audits-a.audits).slice(0,20);
+
+  return {
+    totalAudits: audits.length,
+    auditedOts: auditedOts.length,
+    matchedOts: matchedOts.length,
+    matchedAudits: matchedAudits,
+    incidenceRate: auditedOts.length ? round(matchedOts.length / auditedOts.length * 100, 1) : 0,
+    auditIncidenceRate: audits.length ? round(matchedAudits / audits.length * 100, 1) : 0,
+    sources: Object.keys(sources).map(k => [k, sources[k]]),
+    timing: Object.keys(timing).map(k => [k, timing[k]]),
+    monthly: Object.keys(monthMap).sort().map(k => ({ month:k, audits:monthMap[k].audits, matched:monthMap[k].matched, rate:monthMap[k].audits ? round(monthMap[k].matched/monthMap[k].audits*100,1):0 })),
+    byStatus: crossGroups(statusMap),
+    byShift: crossGroups(shiftMap),
+    reasons: topPairs(matchedReasons, 8),
+    areas: topPairs(matchedAreas, 8),
+    details: details
+  };
+}
+
+function addCrossGroup(obj, key, matched) { if (!obj[key]) obj[key] = { total:0, matched:0 }; obj[key].total++; if (matched) obj[key].matched++; }
+function crossGroups(obj) { return Object.keys(obj).map(k => ({ name:k, total:obj[k].total, matched:obj[k].matched, rate:obj[k].total ? round(obj[k].matched/obj[k].total*100,1):0 })).sort((a,b)=>b.total-a.total); }
+function otKey(v) { return cleanText(v).replace(/\.0+$/, '').replace(/\s+/g, '').toUpperCase(); }
+function minDate(values) { return values.length ? new Date(Math.min.apply(null, values.map(d=>d.getTime()))) : null; }
+function formatDate(d) { return d ? Utilities.formatDate(d, CONFIG.TIMEZONE, 'dd/MM/yyyy') : '—'; }
+function topLabel(obj) { const pairs=topPairs(obj,1); return pairs.length ? pairs[0][0] : 'Não informado'; }
 
 function analyzeQuality(table, filters, cutoff) {
   const h = table.headers;
