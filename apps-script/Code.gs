@@ -17,6 +17,29 @@ function include(filename) {
   return HtmlService.createHtmlOutputFromFile(filename).getContent();
 }
 
+function onOpen() {
+  SpreadsheetApp.getUi().createMenu('Asakai')
+    .addItem('Registrar resumo do dia', 'registrarResumoAsakaiHoje')
+    .addToUi();
+}
+
+function registrarResumoAsakaiHoje() {
+  const ss = SpreadsheetApp.getActiveSpreadsheet() || SpreadsheetApp.openById(CONFIG.SPREADSHEET_ID);
+  const sheet = ss.getSheetByName('AsakaiDash');
+  if (!sheet) throw new Error('A aba AsakaiDash não foi encontrada.');
+  const today = Number(Utilities.formatDate(new Date(), CONFIG.TIMEZONE, 'd'));
+  const days = sheet.getRange(15, 2, 1, 31).getDisplayValues()[0].map(v => Number(String(v).replace(/\D/g, '')));
+  const dayIndex = days.indexOf(today);
+  if (dayIndex < 0) throw new Error('O dia ' + today + ' não foi encontrado na linha 15 da AsakaiDash.');
+  const source = sheet.getRange('AQ4:AQ7').getValues();
+  if (source.every(row => row[0] === '' || row[0] == null)) throw new Error('AQ4:AQ7 está vazio. Cole o resumo amarelo e aguarde os cálculos antes de registrar.');
+  const targetColumn = 2 + dayIndex;
+  sheet.getRange(3, targetColumn, 4, 1).setValues(source);
+  SpreadsheetApp.flush();
+  ss.toast('TOTAL, PCP, TÊXTIL e MANUFATURA registrados no dia ' + String(today).padStart(2, '0') + '.', 'Asakai', 6);
+  return { day: today, column: targetColumn, values: source.map(row => row[0]) };
+}
+
 function getDashboardData(filters) {
   filters = filters || {};
   const safeFilters = {
@@ -25,19 +48,63 @@ function getDashboardData(filters) {
     status: cleanText(filters.status || 'Todas')
   };
   const cache = CacheService.getScriptCache();
-  const key = 'dashboard-v7-' + Utilities.base64EncodeWebSafe(JSON.stringify(safeFilters));
-  const cached = cache.get(key);
-  if (cached) return JSON.parse(cached);
-
+  const key = 'dashboard-v8-' + Utilities.base64EncodeWebSafe(JSON.stringify(safeFilters));
   const ss = SpreadsheetApp.openById(CONFIG.SPREADSHEET_ID);
+  const cached = cache.get(key);
+  if (cached) {
+    const result = JSON.parse(cached);
+    result.asakai = analyzeAsakai(ss);
+    return result;
+  }
+
   const baseValues = getValues(ss, CONFIG.SHEETS.base);
   const qualityValues = getValues(ss, CONFIG.SHEETS.quality);
   const replacementValues = getValues(ss, CONFIG.SHEETS.replacements);
   const cutoff = getCutoff(safeFilters.period);
   const result = buildDashboard(baseValues, qualityValues, replacementValues, safeFilters, cutoff);
+  result.asakai = analyzeAsakai(ss);
   const payload = JSON.stringify(result);
   if (payload.length < 95000) cache.put(key, payload, CONFIG.CACHE_SECONDS);
   return result;
+}
+
+function analyzeAsakai(ss) {
+  const sheet = ss.getSheetByName('AsakaiDash');
+  if (!sheet) return { available:false, message:'A aba AsakaiDash não foi encontrada.' };
+  const days = sheet.getRange(15, 2, 1, 31).getDisplayValues()[0];
+  const values = sheet.getRange(3, 2, 10, 31).getValues();
+  const currentDay = Number(Utilities.formatDate(new Date(), CONFIG.TIMEZONE, 'd'));
+  const daily = days.map((label, i) => ({
+    day: String(label || i + 1).padStart(2, '0'), total:numberValue(values[0][i]), pcp:numberValue(values[1][i]),
+    textil:numberValue(values[2][i]), manufatura:numberValue(values[3][i]), generated:numberValue(values[7][i]), delivered:numberValue(values[9][i])
+  }));
+  const current = daily.find(d => Number(d.day) === currentDay) || daily.filter(d => d.total || d.generated || d.delivered).slice(-1)[0] || daily[0];
+  const leadTable = sheet.getRange('A18:H24').getDisplayValues();
+  const auditTable = sheet.getRange('A26:C28').getDisplayValues();
+  const reasonTable = sheet.getRange('J19:N25').getDisplayValues();
+  const partTable = sheet.getRange('P19:S25').getDisplayValues();
+  return {
+    available:true, currentDay:current.day, current:current,
+    efficiency:current.generated ? round(current.delivered/current.generated*100,1):0,
+    daily:daily,
+    lead:{totalDelivered:matrixValue(leadTable,'TOTAL ENTREGUE'),days:matrixValue(leadTable,'DIAS'),average:matrixValue(leadTable,'MEDIA'),target:matrixValue(leadTable,'META'),aboveAverage:matrixValue(leadTable,'PECAS ACIMA DA MEDIA')},
+    audit:{audited:matrixValue(auditTable,'AUDITADAS'),requested:matrixValue(auditTable,'SOLICITADAS'),rate:lastNonBlank(auditTable[2]||[])},
+    reasons:matrixPairs(reasonTable), parts:matrixPairs(partTable),
+    leadTable:leadTable, auditTable:auditTable
+  };
+}
+
+function matrixValue(matrix, label) {
+  const target=normalize(label);
+  for(let r=0;r<matrix.length;r++)for(let c=0;c<matrix[r].length;c++)if(normalize(matrix[r][c]).indexOf(target)>=0){for(let x=matrix[r].length-1;x>c;x--)if(cleanText(matrix[r][x]))return cleanText(matrix[r][x]);}
+  return '—';
+}
+function lastNonBlank(row) { for(let i=row.length-1;i>=0;i--)if(cleanText(row[i]))return cleanText(row[i]); return '—'; }
+
+function matrixPairs(matrix) {
+  const out=[];
+  matrix.forEach(row=>{const label=row.map(cleanText).find(v=>v&&!/^\d+[.,]?\d*%?$/.test(v));const nums=row.map(cleanText).filter(v=>/^[-+]?\d[\d.]*([,]\d+)?%?$/.test(v));if(label&&nums.length&&!/MOTIVOS|PARTE|TOTAL|SOLICITACOES|PECA|PORCENT/i.test(normalize(label)))out.push([label,numberValue(nums[0])]);});
+  return out.slice(0,8);
 }
 
 function getValues(ss, sheetName) {
