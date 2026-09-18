@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <base target="_top">
+  <?!= include('Stylesheet'); ?>
+</head>
+<body>
+  <aside class="sidebar">
+    <div class="brand"><span class="brand-mark">R</span><div><strong>Reposições</strong><small>Operação & Corte</small></div></div>
+    <nav id="nav"></nav>
+    <div class="privacy"><span>●</span> Planilha privada<br><small>Somente dados consolidados</small></div>
+  </aside>
+  <main>
+    <header>
+      <div><p class="eyebrow">CENTRAL DE INDICADORES</p><h1 id="page-title">Visão Executiva</h1><p id="subtitle">Carregando dados da planilha…</p></div>
+      <div class="filters">
+        <select id="period"><option value="all">Todo o período</option><option value="30">Últimos 30 dias</option><option value="90">Últimos 90 dias</option><option value="180">Últimos 180 dias</option><option value="365">Últimos 12 meses</option></select>
+        <select id="unit"><option>Todas</option></select>
+        <select id="status"><option>Todas</option></select>
+        <button id="refresh" title="Atualizar">↻</button>
+      </div>
+    </header>
+    <div id="alert" class="alert hidden"></div>
+    <section id="content" aria-live="polite"><div class="loading"><span></span><p>Calculando indicadores…</p></div></section>
+    <footer><span id="updated"></span><span>Fonte: Google Sheets corporativo</span></footer>
+  </main>
+  <?!= include('JavaScript'); ?>
+</body>
+</html>
