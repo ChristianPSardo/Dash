@@ -107,11 +107,13 @@ function buildDashboard(baseValues, qualityValues, replacementValues, filters, c
 
 function analyzeQuality(table, filters, cutoff) {
   const h = table.headers;
-  const dateCol = findColumn(h, ['DATA', 'DATA AUDITORIA', 'DATA CORTE']);
+  const dateCol = fallbackColumn(findColumn(h, ['DATA', 'DATA AUDITORIA', 'DATA CORTE']), 0);
   const unitCol = findColumn(h, ['UNIDADE', 'UND CORTE', 'UNIDADE CORTE']);
-  const resultCol = findColumn(h, ['RESULTADO', 'SITUACAO', 'STATUS']);
-  const shiftCol = findColumn(h, ['TURNO PRODUZIDO', 'TURNO']);
+  const resultCol = fallbackColumn(findColumn(h, ['RESULTADO', 'SITUACAO', 'STATUS']), 8);
+  const shiftCol = fallbackColumn(findColumn(h, ['TURNO PRODUZIDO', 'TURNO']), 4);
   const deviationCol = findColumn(h, ['DESVIO', 'DIFERENCA', 'VARIACAO']);
+  const cutWeightCol = findColumn(h, ['PESO CORTE']);
+  const auditedWeightCol = findColumn(h, ['PESO AUDITADO']);
   const rows = table.rows.filter(r => passes(r[dateCol], r[unitCol], r[resultCol], filters, cutoff, true));
   let approved = 0, rejected = 0;
   const deviations = [], shifts = {};
@@ -121,7 +123,12 @@ function analyzeQuality(table, filters, cutoff) {
     const no = status.indexOf('REPROV') >= 0;
     if (ok) approved++;
     if (no) rejected++;
-    const dev = percentValue(r[deviationCol]);
+    let dev = percentValue(r[deviationCol]);
+    if (deviationCol < 0 && cutWeightCol >= 0 && auditedWeightCol >= 0) {
+      const cutWeight = numberValue(r[cutWeightCol]);
+      const auditedWeight = numberValue(r[auditedWeightCol]);
+      dev = cutWeight ? Math.abs(auditedWeight - cutWeight) / cutWeight : null;
+    }
     if (dev != null && Math.abs(dev) < 1) deviations.push(Math.abs(dev) * 100);
     const shift = cleanText(r[shiftCol]) || 'Não informado';
     if (!shifts[shift]) shifts[shift] = { total: 0, approved: 0 };
@@ -175,6 +182,7 @@ function parseTable(values) {
   return { headers: values[0].map(normalize), rows: values.slice(1).filter(r => r.some(v => v !== '' && v != null)) };
 }
 function findColumn(headers, candidates) { for (let i=0;i<candidates.length;i++){const c=normalize(candidates[i]);const exact=headers.indexOf(c);if(exact>=0)return exact;const partial=headers.findIndex(h=>h.indexOf(c)>=0);if(partial>=0)return partial;} return -1; }
+function fallbackColumn(column, fallback) { return column >= 0 ? column : fallback; }
 function passes(dateValue, unitValue, statusValue, filters, cutoff, ignoreStatus) { const d=toDate(dateValue); if(cutoff && d && d<cutoff)return false; if(filters.unit!=='Todas' && unitValue !== undefined && cleanText(unitValue)!==filters.unit)return false; if(!ignoreStatus && filters.status!=='Todas' && statusValue !== undefined && cleanText(statusValue)!==filters.status)return false; return true; }
 function getCutoff(period) { if(period==='all')return null; const d=new Date(); d.setHours(0,0,0,0); d.setDate(d.getDate()-Number(period)); return d; }
 function normalize(v) { return String(v == null ? '' : v).normalize('NFD').replace(/[\u0300-\u036f]/g,'').replace(/[^A-Za-z0-9]+/g,' ').trim().toUpperCase(); }
