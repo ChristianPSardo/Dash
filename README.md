@@ -10,6 +10,10 @@ Dashboard em Next.js para acompanhar solicitações de reposição e auditorias 
 - Evolução mensal das solicitações
 - Situação atual, áreas causadoras e principais motivos
 - Auditorias aprovadas, reprovadas e taxa de conformidade
+- Reposições produzidas no corte, volume, conclusão e backlog
+- Lead time mediano, médio e P90, com tempos por etapa
+- SLA de sete dias, fluxo mensal e distribuição do tempo de atendimento
+- Materiais, componentes, motivos e status do processo no corte
 
 ## Executar localmente
 
@@ -34,7 +38,7 @@ O servidor consulta as abas sem tornar a planilha pública. E-mails e observaç�
 ## Publicar na Vercel
 
 1. Envie este projeto para um repositório GitHub ou importe a pasta na Vercel.
-2. Em **Settings → Environment Variables**, cadastre as cinco variáveis descritas no `.env.example`.
+2. Em **Settings → Environment Variables**, cadastre as variáveis descritas no `.env.example`.
 3. Clique em **Deploy**.
 
 Enquanto as credenciais corporativas não estiverem configuradas, o painel mostra o snapshot consolidado do arquivo fornecido.
