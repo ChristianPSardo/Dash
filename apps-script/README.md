@@ -29,3 +29,7 @@ Dashboard corporativo que lê diretamente a planilha privada e mostra somente in
 ## Atualizações
 
 Após alterar o código, use **Gerenciar implantações → Editar → Nova versão**. O botão `↻` no dashboard recalcula os indicadores; o cache pode levar até cinco minutos para expirar.
+
+## Asakai
+
+A visão **Asakai** lê os indicadores diretamente da aba `AsakaiDash`. Depois de colar o resumo na área amarela e aguardar o cálculo de `AQ4:AQ7`, use **Asakai → Registrar resumo do dia** no menu da planilha ou o botão equivalente no dashboard. A função encontra o dia atual na linha 15 e grava TOTAL, PCP, TÊXTIL e MANUFATURA nas linhas 3 a 6 da coluna correspondente.
