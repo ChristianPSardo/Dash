@@ -25,7 +25,7 @@ function getDashboardData(filters) {
     status: cleanText(filters.status || 'Todas')
   };
   const cache = CacheService.getScriptCache();
-  const key = 'dashboard-v3-' + Utilities.base64EncodeWebSafe(JSON.stringify(safeFilters));
+  const key = 'dashboard-v4-' + Utilities.base64EncodeWebSafe(JSON.stringify(safeFilters));
   const cached = cache.get(key);
   if (cached) return JSON.parse(cached);
 
