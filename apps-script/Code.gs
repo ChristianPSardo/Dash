@@ -25,7 +25,7 @@ function getDashboardData(filters) {
     status: cleanText(filters.status || 'Todas')
   };
   const cache = CacheService.getScriptCache();
-  const key = 'dashboard-v6-' + Utilities.base64EncodeWebSafe(JSON.stringify(safeFilters));
+  const key = 'dashboard-v7-' + Utilities.base64EncodeWebSafe(JSON.stringify(safeFilters));
   const cached = cache.get(key);
   if (cached) return JSON.parse(cached);
 
@@ -58,6 +58,10 @@ function buildDashboard(baseValues, qualityValues, replacementValues, filters, c
   const area = findColumn(base.headers, ['AREA CAUSADORA']);
   const reason = findColumn(base.headers, ['MOTIVO']);
   const baseOrder = findColumn(base.headers, ['OP', 'OT', 'ORDEM']);
+  const baseArticle = findColumn(base.headers, ['ARTIGO']);
+  const baseDescription = findColumn(base.headers, ['DESC REPOSICAO']);
+  const baseObservation = findColumn(base.headers, ['OBS', 'OBSERVACAO']);
+  const baseWidth = findColumn(base.headers, ['LARGURA']);
 
   const allUnits = unique(base.rows.map(r => cleanText(r[baseUnit])).concat(replacementValues.map(r => cleanText(r[1]))));
   const allStatuses = unique(base.rows.map(r => cleanText(r[baseStatus])));
@@ -81,8 +85,10 @@ function buildDashboard(baseValues, qualityValues, replacementValues, filters, c
   const cut = analyzeReplacements(replacements);
   const qualityData = analyzeQuality(quality, filters, cutoff);
   const auditCross = analyzeAuditCross(quality, filteredBase, replacements, {
-    date: baseDate, order: baseOrder, area: area, reason: reason, status: baseStatus
+    date: baseDate, order: baseOrder, area: area, reason: reason, status: baseStatus,
+    article: baseArticle, description: baseDescription, observation: baseObservation, missing: missingPieces
   }, cutoff);
+  const widthAnalysis = analyzeWidths(filteredBase, baseWidth, baseDate, missingPieces);
 
   const result = {
     source: 'Google Sheets privado — dados consolidados no Apps Script',
@@ -105,6 +111,7 @@ function buildDashboard(baseValues, qualityValues, replacementValues, filters, c
     situations: topPairs(group(filteredBase, baseStatus), 8),
     quality: qualityData,
     auditCross: auditCross,
+    widthAnalysis: widthAnalysis,
     cut: cut
   };
   return result;
@@ -123,13 +130,15 @@ function analyzeAuditCross(quality, baseRows, replacementRows, baseCols, cutoff)
 
   const requestsByOt = {};
   function requestEntry(ot) {
-    if (!requestsByOt[ot]) requestsByOt[ot] = { base: 0, replacements: 0, dates: [], reasons: {}, areas: {}, statuses: {} };
+    if (!requestsByOt[ot]) requestsByOt[ot] = { base: 0, replacements: 0, dates: [], reasons: {}, areas: {}, statuses: {}, articles: {}, descriptions: {}, observations: {}, missing: 0 };
     return requestsByOt[ot];
   }
   baseRows.forEach(r => {
     const ot = otKey(r[baseCols.order]); if (!ot) return;
     const e = requestEntry(ot); e.base++; const d = toDate(r[baseCols.date]); if (d) e.dates.push(d);
     count(e.reasons, r[baseCols.reason]); count(e.areas, r[baseCols.area]); count(e.statuses, r[baseCols.status]);
+    countIfPresent(e.articles, r[baseCols.article]); countIfPresent(e.descriptions, r[baseCols.description]); countIfPresent(e.observations, r[baseCols.observation]);
+    e.missing += numberValue(r[baseCols.missing]);
   });
   replacementRows.forEach(r => {
     const ot = otKey(r[4]); if (!ot) return;
@@ -153,23 +162,26 @@ function analyzeAuditCross(quality, baseRows, replacementRows, baseCols, cutoff)
   const auditedOts = Object.keys(auditByOt);
   const matchedOts = auditedOts.filter(ot => requestsByOt[ot]);
   const matchedAudits = matchedOts.reduce((n, ot) => n + auditByOt[ot].count, 0);
-  const sources = {'Somente BASE':0,'Somente REPOSIÇÕES':0,'BASE e REPOSIÇÕES':0};
-  const timing = {'Solicitação após auditoria':0,'Mesmo dia':0,'Solicitação antes da auditoria':0,'Sem data comparável':0};
-  const matchedReasons = {}, matchedAreas = {};
+  const matchedReasons = {}, matchedAreas = {}, matchedStatuses = {};
+  let matchedRequests = 0, matchedPieces = 0, repeatOts = 0, approvedMatchedOts = 0;
   const details = matchedOts.map(ot => {
     const a = auditByOt[ot], req = requestsByOt[ot];
     const firstAudit = minDate(a.dates), firstRequest = minDate(req.dates);
     const source = req.base && req.replacements ? 'BASE e REPOSIÇÕES' : req.base ? 'Somente BASE' : 'Somente REPOSIÇÕES';
-    sources[source]++;
     Object.keys(req.reasons).forEach(k => add(matchedReasons, k, req.reasons[k]));
     Object.keys(req.areas).forEach(k => add(matchedAreas, k, req.areas[k]));
+    Object.keys(req.statuses).forEach(k => add(matchedStatuses, k, req.statuses[k]));
+    matchedRequests += req.base + req.replacements; matchedPieces += req.missing;
+    if (req.base + req.replacements > 1) repeatOts++;
+    if (normalize(topLabel(a.statuses)).indexOf('APROV') >= 0) approvedMatchedOts++;
     let timingLabel = 'Sem data comparável';
     const delta = diffDays(firstAudit, firstRequest);
     if (delta != null) timingLabel = delta > 0 ? 'Solicitação após auditoria' : delta === 0 ? 'Mesmo dia' : 'Solicitação antes da auditoria';
-    timing[timingLabel]++;
     return {
       ot: ot, audits: a.count, requests: req.base + req.replacements, source: source,
-      auditResult: topLabel(a.statuses), auditDate: formatDate(firstAudit), requestDate: formatDate(firstRequest), timing: timingLabel
+      auditResult: topLabel(a.statuses), auditDate: formatDate(firstAudit), requestDate: formatDate(firstRequest), timing: timingLabel,
+      article: joinTopLabels(req.articles, 3), description: joinTopLabels(req.descriptions, 3), area: joinTopLabels(req.areas, 3),
+      observation: joinTopLabels(req.observations, 2), missingPieces: round(req.missing, 0)
     };
   }).sort((a,b) => b.requests-a.requests || b.audits-a.audits).slice(0,20);
 
@@ -180,8 +192,11 @@ function analyzeAuditCross(quality, baseRows, replacementRows, baseCols, cutoff)
     matchedAudits: matchedAudits,
     incidenceRate: auditedOts.length ? round(matchedOts.length / auditedOts.length * 100, 1) : 0,
     auditIncidenceRate: audits.length ? round(matchedAudits / audits.length * 100, 1) : 0,
-    sources: Object.keys(sources).map(k => [k, sources[k]]),
-    timing: Object.keys(timing).map(k => [k, timing[k]]),
+    matchedRequests: matchedRequests,
+    matchedPieces: round(matchedPieces, 0),
+    repeatOts: repeatOts,
+    approvedMatchedOts: approvedMatchedOts,
+    requestStatuses: topPairs(matchedStatuses, 8),
     monthly: Object.keys(monthMap).sort().map(k => ({ month:k, audits:monthMap[k].audits, matched:monthMap[k].matched, rate:monthMap[k].audits ? round(monthMap[k].matched/monthMap[k].audits*100,1):0 })),
     byStatus: crossGroups(statusMap),
     byShift: crossGroups(shiftMap),
@@ -197,6 +212,36 @@ function otKey(v) { return cleanText(v).replace(/\.0+$/, '').replace(/\s+/g, '')
 function minDate(values) { return values.length ? new Date(Math.min.apply(null, values.map(d=>d.getTime()))) : null; }
 function formatDate(d) { return d ? Utilities.formatDate(d, CONFIG.TIMEZONE, 'dd/MM/yyyy') : '—'; }
 function topLabel(obj) { const pairs=topPairs(obj,1); return pairs.length ? pairs[0][0] : 'Não informado'; }
+function joinTopLabels(obj, limit) { return topPairs(obj, limit).map(p=>p[0]).join(' • ') || '—'; }
+function countIfPresent(obj, value) { const key=cleanText(value); if(key) add(obj,key,1); }
+
+function analyzeWidths(rows, widthCol, dateCol, piecesCol) {
+  const grouped = {};
+  rows.forEach(r => {
+    const width = normalizeWidth(r[widthCol]), d = toDate(r[dateCol]), pieces = numberValue(r[piecesCol]);
+    if (!width || !d || pieces <= 0) return;
+    if (!grouped[width]) grouped[width] = { total:0, dates:{} };
+    grouped[width].total += pieces;
+    add(grouped[width].dates, Utilities.formatDate(d, CONFIG.TIMEZONE, 'yyyy-MM-dd'), pieces);
+  });
+  return Object.keys(grouped).map(width => ({
+    width:width, total:round(grouped[width].total,0),
+    points:sortedPairs(grouped[width].dates).map(p=>({date:p[0],pieces:round(p[1],0)}))
+  })).sort((a,b)=>b.total-a.total).slice(0,15);
+}
+
+function normalizeWidth(value) {
+  const text=cleanText(value); if(!text)return '';
+  const normalized=text.replace(',','.').replace(/[^0-9.]/g,'');
+  const number=Number(normalized); return isFinite(number)&&normalized ? String(round(number,2)) : text;
+}
+
+function buildReplacementTrend(rows, categoryCol) {
+  const totals={}, months={};
+  rows.forEach(r=>{const name=cleanText(r[categoryCol])||'Não informado',d=toDate(r[3]),pieces=numberValue(r[7]);if(!d||pieces<=0)return;add(totals,name,pieces);const m=Utilities.formatDate(d,CONFIG.TIMEZONE,'yyyy-MM');if(!months[m])months[m]={};add(months[m],name,pieces);});
+  const names=topPairs(totals,6).map(p=>p[0]), labels=Object.keys(months).sort();
+  return {labels:labels,series:names.map(name=>({name:name,values:labels.map(m=>round(months[m][name]||0,0))}))};
+}
 
 function analyzeQuality(table, filters, cutoff) {
   const h = table.headers;
@@ -270,7 +315,8 @@ function analyzeReplacements(rows) {
     slaRate: cdLead.length ? round(sla / cdLead.length * 100, 1) : 0,
     leadTime: Object.assign(stats(cdLead), { target: 2, ignoredOutliers: cleanedLead.ignored, outlierLimit: cleanedLead.limit }),
     stages: [stage('Solicitação → liberação', stages.release),stage('Liberação → recebimento', stages.receive),stage('Recebimento → corte', stages.cut),stage('Corte → finalização', stages.finish)],
-    reasons: topPairs(reasons, 10), materials: topPairs(materials, 8), parts: topPairs(parts, 10), supplyStatus: topPairs(supply, 8), cutStatus: topPairs(cutStatus, 8), receiveStatus: topPairs(receiveStatus, 8), leadBuckets: Object.keys(buckets).map(k => [k,buckets[k]])
+    reasons: topPairs(reasons, 10), materials: topPairs(materials, 8), parts: topPairs(parts, 10), supplyStatus: topPairs(supply, 8), cutStatus: topPairs(cutStatus, 8), receiveStatus: topPairs(receiveStatus, 8), leadBuckets: Object.keys(buckets).map(k => [k,buckets[k]]),
+    partTrend: buildReplacementTrend(rows, 9), reasonTrend: buildReplacementTrend(rows, 0)
   };
 }
 
