@@ -75,8 +75,8 @@ function analyzeAsakai(ss) {
   const values = sheet.getRange(3, 2, 10, 31).getValues();
   const currentDay = Number(Utilities.formatDate(new Date(), CONFIG.TIMEZONE, 'd'));
   const daily = days.map((label, i) => ({
-    day: String(label || i + 1).padStart(2, '0'), total:numberValue(values[0][i]), pcp:numberValue(values[1][i]),
-    textil:numberValue(values[2][i]), manufatura:numberValue(values[3][i]), generated:numberValue(values[7][i]), delivered:numberValue(values[9][i])
+    day: String(label || i + 1).padStart(2, '0'), total:nullableNumber(values[0][i]), pcp:nullableNumber(values[1][i]),
+    textil:nullableNumber(values[2][i]), manufatura:nullableNumber(values[3][i]), generated:nullableNumber(values[7][i]), delivered:nullableNumber(values[9][i])
   }));
   const current = daily.find(d => Number(d.day) === currentDay) || daily.filter(d => d.total || d.generated || d.delivered).slice(-1)[0] || daily[0];
   const leadTable = sheet.getRange('A18:H24').getDisplayValues();
@@ -100,6 +100,7 @@ function matrixValue(matrix, label) {
   return '—';
 }
 function lastNonBlank(row) { for(let i=row.length-1;i>=0;i--)if(cleanText(row[i]))return cleanText(row[i]); return '—'; }
+function nullableNumber(value) { return value === '' || value == null ? null : numberValue(value); }
 
 function matrixPairs(matrix) {
   const out=[];
