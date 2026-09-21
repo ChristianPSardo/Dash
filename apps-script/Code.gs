@@ -28,16 +28,32 @@ function registrarResumoAsakaiHoje() {
   const sheet = ss.getSheetByName('AsakaiDash');
   if (!sheet) throw new Error('A aba AsakaiDash não foi encontrada.');
   const today = Number(Utilities.formatDate(new Date(), CONFIG.TIMEZONE, 'd'));
-  const days = sheet.getRange(15, 2, 1, 31).getDisplayValues()[0].map(v => Number(String(v).replace(/\D/g, '')));
-  const dayIndex = days.indexOf(today);
-  if (dayIndex < 0) throw new Error('O dia ' + today + ' não foi encontrado na linha 15 da AsakaiDash.');
+  const targetColumn = findAsakaiDayColumn(sheet, today);
   const source = sheet.getRange('AQ4:AQ7').getValues();
   if (source.every(row => row[0] === '' || row[0] == null)) throw new Error('AQ4:AQ7 está vazio. Cole o resumo amarelo e aguarde os cálculos antes de registrar.');
-  const targetColumn = 2 + dayIndex;
   sheet.getRange(3, targetColumn, 4, 1).setValues(source);
   SpreadsheetApp.flush();
   ss.toast('TOTAL, PCP, TÊXTIL e MANUFATURA registrados no dia ' + String(today).padStart(2, '0') + '.', 'Asakai', 6);
   return { day: today, column: targetColumn, values: source.map(row => row[0]) };
+}
+
+function findAsakaiDayColumn(sheet, today) {
+  const grid = sheet.getRange(1, 2, 20, 31).getDisplayValues();
+  for (let row = 0; row < grid.length; row++) {
+    const parsed = grid[row].map(parseAsakaiDay);
+    const validDays = parsed.filter(day => day >= 1 && day <= 31);
+    if (new Set(validDays).size >= 20) {
+      const index = parsed.indexOf(today);
+      if (index >= 0) return 2 + index;
+    }
+  }
+  // Layout padrão da AsakaiDash: dia 01 em B e dia 31 em AF.
+  return today + 1;
+}
+
+function parseAsakaiDay(value) {
+  const match = cleanText(value).match(/^(?:DIA\s*)?0?([1-9]|[12]\d|3[01])$/i);
+  return match ? Number(match[1]) : null;
 }
 
 function getDashboardData(filters) {
